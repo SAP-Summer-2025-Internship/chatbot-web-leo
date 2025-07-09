@@ -1,8 +1,8 @@
 import express, { Request, Response } from 'express';
 import { createServer } from 'http';
 import { Server } from 'socket.io';
-import path from 'path';
 import axios, { AxiosResponse } from 'axios';
+import cors from 'cors';
 
 // Types
 interface OllamaRequest {
@@ -25,15 +25,27 @@ interface HealthResponse {
 
 const app = express();
 const server = createServer(app);
-const io = new Server(server);
+
+// Configure CORS for Socket.IO
+const io = new Server(server, {
+    cors: {
+        origin: process.env.FRONTEND_URL || "http://localhost:3001",
+        methods: ["GET", "POST"],
+        credentials: true
+    }
+});
 
 const PORT: number = parseInt(process.env.PORT || '3000', 10);
 // Use localhost when running locally, ollama when running in Docker
 const OLLAMA_URL: string = process.env.OLLAMA_URL || 'http://localhost:11434/api/generate';
 const MODEL_NAME: string = process.env.MODEL_NAME || 'qwen:7b';
 
-// Serve static files
-app.use(express.static(path.join(__dirname, '../public')));
+// Middleware
+app.use(cors({
+    origin: process.env.FRONTEND_URL || "http://localhost:3001",
+    credentials: true
+}));
+app.use(express.json());
 
 // Health check endpoint
 app.get('/health', async (_: Request, res: Response<HealthResponse>) => {
@@ -54,6 +66,43 @@ app.get('/health', async (_: Request, res: Response<HealthResponse>) => {
             url: OLLAMA_URL.replace('/api/generate', '/api/version'),
             error: error.message 
         });
+    }
+});
+
+// API endpoint for getting bot response
+app.post('/api/chat', async (req: Request, res: Response) => {
+    try {
+        const { message } = req.body;
+        if (!message) {
+            return res.status(400).json({ error: 'Message is required' });
+        }
+
+        console.log(`Sending request to Ollama at: ${OLLAMA_URL}`);
+        const response: AxiosResponse<OllamaResponse> = await axios.post<OllamaResponse>(
+            OLLAMA_URL, 
+            {
+                model: MODEL_NAME,
+                prompt: message,
+                stream: false
+            } as OllamaRequest, 
+            {
+                headers: {
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+        
+        console.log('Received response from Ollama');
+        res.json({ response: response.data.response });
+    } catch (error: any) {
+        console.error('Error calling Ollama:', error.message);
+        let errorMessage = "I'm sorry, I'm having trouble connecting to my AI service right now. Please try again later.";
+        
+        if (error.code === 'ECONNREFUSED') {
+            errorMessage = "I'm sorry, I can't connect to the AI service. Please make sure Ollama is running.";
+        }
+        
+        res.status(500).json({ error: errorMessage });
     }
 });
 
@@ -111,6 +160,6 @@ io.on('connection', (socket) => {
 
 // Start server
 server.listen(PORT, () => {
-    console.log(`Chatbot server running on port ${PORT}`);
-    console.log(`Visit http://localhost:${PORT} to use the chatbot`);
+    console.log(`Chatbot backend running on port ${PORT}`);
+    console.log(`Health check: http://localhost:${PORT}/health`);
 });

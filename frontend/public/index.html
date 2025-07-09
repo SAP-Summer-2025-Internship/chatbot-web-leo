@@ -88,6 +88,22 @@
             color: #666;
             display: none;
         }
+
+        .status {
+            padding: 10px;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        .status.connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+
+        .status.disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
     </style>
 </head>
 <body>
@@ -95,6 +111,8 @@
         <div class="chat-header">
             <h2>Simple Chatbot</h2>
         </div>
+        
+        <div class="status" id="status">Connecting...</div>
         
         <div class="chat-messages" id="messages">
             <!-- Messages will be added here -->
@@ -106,12 +124,33 @@
         </div>
     </div>
 
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
-        const socket = io();
+        // Get backend URL from environment or use default
+        const BACKEND_URL = window.location.hostname === 'localhost' ? 'http://localhost:3002' : 'http://backend:3000';
+        
+        const socket = io(BACKEND_URL);
         const messagesContainer = document.getElementById('messages');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
+        const statusElement = document.getElementById('status');
+
+        // Connection status
+        socket.on('connect', () => {
+            statusElement.textContent = 'Connected';
+            statusElement.className = 'status connected';
+        });
+
+        socket.on('disconnect', () => {
+            statusElement.textContent = 'Disconnected';
+            statusElement.className = 'status disconnected';
+        });
+
+        socket.on('connect_error', (error) => {
+            statusElement.textContent = 'Connection Error';
+            statusElement.className = 'status disconnected';
+            console.error('Connection error:', error);
+        });
 
         // Add message to chat
         function addMessage(message, isUser = false) {
@@ -125,7 +164,7 @@
         // Send message from user
         function sendMessage() {
             const message = messageInput.value.trim();
-            if (message) {
+            if (message && socket.connected) {
                 addMessage(message, true);
                 socket.emit('user-message', message);
                 messageInput.value = '';

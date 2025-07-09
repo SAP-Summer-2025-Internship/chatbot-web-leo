@@ -1,0 +1,27 @@
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "3002:3000"
+    environment:
+      - PORT=3000
+      - OLLAMA_URL=http://host.docker.internal:11434/api/generate
+      - MODEL_NAME=qwen:7b
+      - FRONTEND_URL=http://localhost:3001
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "3001:3001"
+    depends_on:
+      - backend
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+
+networks:
+  chatbot-network:
+    driver: bridge

@@ -1,0 +1,14 @@
+{
+  "name": "chatbot-frontend",
+  "version": "1.0.0",
+  "description": "Frontend for chatbot web application",
+  "scripts": {
+    "start": "http-server public -p 3001 -c-1",
+    "dev": "http-server public -p 3001 -c-1"
+  },
+  "dependencies": {
+    "http-server": "^14.1.1"
+  },
+  "author": "",
+  "license": "ISC"
+}
