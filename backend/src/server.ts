@@ -3,6 +3,7 @@ import { createServer } from 'http';
 import { Server } from 'socket.io';
 import axios, { AxiosResponse } from 'axios';
 import cors from 'cors';
+import { setupSwagger } from './swagger';
 
 // Types
 interface OllamaRequest {
@@ -47,6 +48,30 @@ app.use(cors({
 }));
 app.use(express.json());
 
+// Setup Swagger documentation
+setupSwagger(app);
+
+/**
+ * @swagger
+ * /health:
+ *   get:
+ *     summary: Health check endpoint
+ *     description: Check the health status of the chatbot service and its connection to Ollama
+ *     tags: [Health]
+ *     responses:
+ *       200:
+ *         description: Service is healthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ *       500:
+ *         description: Service is unhealthy
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/HealthResponse'
+ */
 // Health check endpoint
 app.get('/health', async (_: Request, res: Response<HealthResponse>) => {
     try {
@@ -69,6 +94,39 @@ app.get('/health', async (_: Request, res: Response<HealthResponse>) => {
     }
 });
 
+/**
+ * @swagger
+ * /api/chat:
+ *   post:
+ *     summary: Send a message to the chatbot
+ *     description: Send a message to the chatbot and receive an AI-generated response
+ *     tags: [Chat]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             $ref: '#/components/schemas/ChatMessage'
+ *     responses:
+ *       200:
+ *         description: Successful response from chatbot
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ChatResponse'
+ *       400:
+ *         description: Bad request - missing message
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ *       500:
+ *         description: Internal server error - AI service unavailable
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/ErrorResponse'
+ */
 // API endpoint for getting bot response
 app.post('/api/chat', async (req: Request, res: Response) => {
     try {
@@ -136,6 +194,47 @@ async function getBotResponse(message: string): Promise<string> {
     }
 }
 
+/**
+ * @swagger
+ * components:
+ *   schemas:
+ *     SocketEvents:
+ *       type: object
+ *       description: Socket.io Events for real-time communication
+ *       properties:
+ *         client_events:
+ *           type: object
+ *           properties:
+ *             user-message:
+ *               type: string
+ *               description: Send a message from user to chatbot
+ *               example: "Hello, how are you?"
+ *         server_events:
+ *           type: object
+ *           properties:
+ *             bot-message:
+ *               type: string
+ *               description: Receive a message from chatbot
+ *               example: "Hello! I'm doing well, thank you for asking."
+ * 
+ * /socket.io:
+ *   get:
+ *     summary: Socket.io WebSocket connection
+ *     description: |
+ *       Real-time bidirectional communication using Socket.io
+ *       
+ *       **Client Events (send from client):**
+ *       - `user-message`: Send a message to the chatbot
+ *       
+ *       **Server Events (receive from server):**
+ *       - `bot-message`: Receive a response from the chatbot
+ *       
+ *       **Connection URL:** `ws://localhost:3002/socket.io/`
+ *     tags: [Socket.io]
+ *     responses:
+ *       101:
+ *         description: WebSocket connection established
+ */
 // Socket.io connection handling
 io.on('connection', (socket) => {
     console.log('A user connected');
@@ -162,4 +261,5 @@ io.on('connection', (socket) => {
 server.listen(PORT, () => {
     console.log(`Chatbot backend running on port ${PORT}`);
     console.log(`Health check: http://localhost:${PORT}/health`);
+    console.log(`API Documentation: http://localhost:${PORT}/api-docs`);
 });
