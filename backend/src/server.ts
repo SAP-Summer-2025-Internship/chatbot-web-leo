@@ -4,6 +4,7 @@ import { Server } from 'socket.io';
 import axios, { AxiosResponse } from 'axios';
 import cors from 'cors';
 import { setupSwagger } from './swagger';
+import { ChatbotDatabase } from './database';
 
 // Types
 interface OllamaRequest {
@@ -19,6 +20,7 @@ interface OllamaResponse {
 interface HealthResponse {
     status: 'healthy' | 'unhealthy';
     ollama: 'connected' | 'disconnected';
+    database: 'connected' | 'disconnected';
     url: string;
     version?: any;
     error?: string;
@@ -75,19 +77,36 @@ setupSwagger(app);
 // Health check endpoint
 app.get('/health', async (_: Request, res: Response<HealthResponse>) => {
     try {
-        // Use the same URL pattern as the main function
+        // Check Ollama connection
         const healthUrl: string = OLLAMA_URL.replace('/api/generate', '/api/version');
-        const response: AxiosResponse = await axios.get(healthUrl, { timeout: 5000 });
-        res.json({ 
-            status: 'healthy', 
-            ollama: 'connected',
+        let ollamaHealthy = false;
+        let ollamaVersion = null;
+        
+        try {
+            const response: AxiosResponse = await axios.get(healthUrl, { timeout: 5000 });
+            ollamaHealthy = true;
+            ollamaVersion = response.data;
+        } catch (error) {
+            ollamaHealthy = false;
+        }
+        
+        // Check database connection
+        const databaseHealthy = await ChatbotDatabase.testConnection();
+        
+        const isHealthy = ollamaHealthy && databaseHealthy;
+        
+        res.status(isHealthy ? 200 : 500).json({ 
+            status: isHealthy ? 'healthy' : 'unhealthy', 
+            ollama: ollamaHealthy ? 'connected' : 'disconnected',
+            database: databaseHealthy ? 'connected' : 'disconnected',
             url: healthUrl,
-            version: response.data 
+            version: ollamaVersion 
         });
     } catch (error: any) {
         res.status(500).json({ 
             status: 'unhealthy', 
             ollama: 'disconnected',
+            database: 'disconnected',
             url: OLLAMA_URL.replace('/api/generate', '/api/version'),
             error: error.message 
         });
@@ -164,15 +183,42 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     }
 });
 
-// Function to get response from Ollama
-async function getBotResponse(message: string): Promise<string> {
+// Function to get response from Ollama with user context
+async function getBotResponse(message: string, userId?: string): Promise<string> {
     try {
+        let contextualPrompt = message;
+        
+        // If userId is provided, add key messages as context
+        if (userId) {
+            try {
+                const userKeyMessages = await ChatbotDatabase.getUserKeyMessages(userId);
+                if (userKeyMessages.length > 0) {
+                    const context = userKeyMessages
+                        .slice(0, 10) // Limit to last 10 key messages to avoid token limits
+                        .map(msg => `- ${msg.message}`)
+                        .join('\n');
+                    
+                    contextualPrompt = `Previous important messages from this user:
+${context}
+
+User says: ${message}
+
+Respond naturally as a helpful assistant. Use the context above to personalize your response, but don't mention that you're using context or previous messages unless directly relevant.`;
+                    
+                    console.log(`Added ${userKeyMessages.length} key messages as context for user ${userId}`);
+                }
+            } catch (error) {
+                console.warn('Could not retrieve key messages for context:', error);
+                // Continue with original message if context retrieval fails
+            }
+        }
+        
         console.log(`Sending request to Ollama at: ${OLLAMA_URL}`);
         const response: AxiosResponse<OllamaResponse> = await axios.post<OllamaResponse>(
             OLLAMA_URL, 
             {
                 model: MODEL_NAME,
-                prompt: message,
+                prompt: contextualPrompt,
                 stream: false
             } as OllamaRequest, 
             {
@@ -242,11 +288,31 @@ io.on('connection', (socket) => {
     // Send welcome message
     socket.emit('bot-message', 'Welcome! I\'m your chatbot assistant. How can I help you today?');
     
-    socket.on('user-message', async (message: string) => {
-        console.log('User message:', message);
+    socket.on('user-message', async (data : {message: string, userId : string}) => {
+        console.log('User message:', data.message);
         
-        // Get bot response from Ollama
-        const botResponse: string = await getBotResponse(message);
+        // Check if message contains "key" and store it in database
+        if (ChatbotDatabase.shouldSave(data.message)) {
+            try {
+                // Test database connection first
+                const dbHealthy = await ChatbotDatabase.testConnection();
+                if (!dbHealthy) {
+                    socket.emit('bot-message', '⚠️ Database is currently unavailable. Your message cannot be saved right now.');
+                } else {
+                    const savedMessage = await ChatbotDatabase.saveMessage(data.userId, data.message);
+                    console.log('message saved to database:', savedMessage);
+                    
+                    // Send confirmation to user
+                    socket.emit('bot-message', '🔑 It seems your message was important and so I\'ve saved it for future reference!');
+                }
+            } catch (error: any) {
+                console.error('Error saving message to database:', error);
+                socket.emit('bot-message', '⚠️ I tried to save your message but encountered a database error. Please try again later.');
+            }
+        }
+        
+        // Get bot response from Ollama with user context
+        const botResponse: string = await getBotResponse(data.message, data.userId);
         
         // Send response back to user
         socket.emit('bot-message', botResponse);
@@ -257,9 +323,60 @@ io.on('connection', (socket) => {
     });
 });
 
-// Start server
+// API endpoints for key messages
+app.get('/api/key-messages', async (req: Request, res: Response) => {
+    try {
+        // Check database connection first
+        const dbHealthy = await ChatbotDatabase.testConnection();
+        if (!dbHealthy) {
+            return res.status(503).json({ error: 'Database is currently unavailable' });
+        }
+        
+        const keyMessages = await ChatbotDatabase.getAllKeyMessages();
+        res.json({ keyMessages });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch key messages: ' + error.message });
+    }
+});
+
+app.get('/api/key-messages/user/:userId', async (req: Request, res: Response) => {
+    try {
+        // Check database connection first
+        const dbHealthy = await ChatbotDatabase.testConnection();
+        if (!dbHealthy) {
+            return res.status(503).json({ error: 'Database is currently unavailable' });
+        }
+        
+        const { userId } = req.params;
+        const keyMessages = await ChatbotDatabase.getUserKeyMessages(userId);
+        res.json({ keyMessages });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch user key messages: ' + error.message });
+    }
+});
+
+app.get('/api/key-messages/search/:searchTerm', async (req: Request, res: Response) => {
+    try {
+        const { searchTerm } = req.params;
+        const keyMessages = await ChatbotDatabase.searchKeyMessages(searchTerm);
+        res.json({ keyMessages });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to search key messages' });
+    }
+});
+
+app.get('/api/key-messages/stats', async (req: Request, res: Response) => {
+    try {
+        const stats = await ChatbotDatabase.getKeyMessageStats();
+        res.json({ stats });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to fetch key message stats' });
+    }
+});
+
+// Start server - Docker Compose ensures all dependencies are ready
 server.listen(PORT, () => {
-    console.log(`Chatbot backend running on port ${PORT}`);
-    console.log(`Health check: http://localhost:${PORT}/health`);
-    console.log(`API Documentation: http://localhost:${PORT}/api-docs`);
+    console.log(`🚀 Chatbot backend running on port ${PORT}`);
+    console.log(`📊 Health check: http://localhost:${PORT}/health`);
+    console.log(`📚 API Documentation: http://localhost:${PORT}/api-docs`);
 });

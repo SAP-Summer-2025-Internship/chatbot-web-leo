@@ -58,6 +58,7 @@
         .chat-input {
             display: flex;
             padding: 20px;
+            gap: 10px;
         }
         
         #messageInput {
@@ -68,9 +69,8 @@
             font-size: 16px;
         }
         
-        #sendButton {
+        #sendButton, #viewKeysButton {
             padding: 10px 20px;
-            margin-left: 10px;
             background-color: #007bff;
             color: white;
             border: none;
@@ -79,8 +79,16 @@
             font-size: 16px;
         }
         
-        #sendButton:hover {
+        #sendButton:hover, #viewKeysButton:hover {
             background-color: #0056b3;
+        }
+
+        #viewKeysButton {
+            background-color: #28a745;
+        }
+
+        #viewKeysButton:hover {
+            background-color: #218838;
         }
         
         .typing-indicator {
@@ -110,6 +118,7 @@
     <div class="chat-container">
         <div class="chat-header">
             <h2>Simple Chatbot</h2>
+            <p id="userIdDisplay" style="font-size: 12px; margin: 5px 0; opacity: 0.8;">User ID: Loading...</p>
         </div>
         
         <div class="status" id="status">Connecting...</div>
@@ -121,11 +130,21 @@
         <div class="chat-input">
             <input type="text" id="messageInput" placeholder="Type your message here..." autocomplete="off">
             <button id="sendButton">Send</button>
+            <button id="viewKeysButton">View Keys</button>
         </div>
     </div>
 
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script>
+        // Generate UUID function
+        function generateUUID() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+                const r = Math.random() * 16 | 0;
+                const v = c == 'x' ? r : (r & 0x3 | 0x8);
+                return v.toString(16);
+            });
+        }
+
         // Get backend URL from environment or use default
         const BACKEND_URL = window.location.hostname === 'localhost' ? 'http://localhost:3002' : 'http://backend:3000';
         
@@ -133,7 +152,22 @@
         const messagesContainer = document.getElementById('messages');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
+        const viewKeysButton = document.getElementById('viewKeysButton');
         const statusElement = document.getElementById('status');
+        const userIdDisplay = document.getElementById('userIdDisplay');
+        
+        // Get or create userId
+        let userId = localStorage.getItem('userId');
+        if (!userId) {
+            userId = generateUUID();
+            localStorage.setItem('userId', userId);
+            console.log('Generated new userId:', userId);
+        } else {
+            console.log('Using existing userId:', userId);
+        }
+
+        // Update user ID display
+        userIdDisplay.textContent = `User ID: ${userId.substring(0, 8)}...`;
 
         // Connection status
         socket.on('connect', () => {
@@ -166,13 +200,38 @@
             const message = messageInput.value.trim();
             if (message && socket.connected) {
                 addMessage(message, true);
-                socket.emit('user-message', message);
+                socket.emit('user-message', {
+                    message, userId
+                });
                 messageInput.value = '';
+            }
+        }
+
+        // View stored key messages
+        async function viewKeyMessages() {
+            try {
+                const response = await fetch(`${BACKEND_URL}/api/key-messages/user/${userId}`);
+                const data = await response.json();
+                
+                if (data.keyMessages && data.keyMessages.length > 0) {
+                    let messageText = `📝 Your stored key messages:\n\n`;
+                    data.keyMessages.forEach((msg, index) => {
+                        const date = new Date(msg.created_at).toLocaleString();
+                        messageText += `${index + 1}. ${msg.message} (${date})\n`;
+                    });
+                    addMessage(messageText, false);
+                } else {
+                    addMessage('📝 No key messages found. Try sending a message containing the word "key"!', false);
+                }
+            } catch (error) {
+                console.error('Error fetching key messages:', error);
+                addMessage('❌ Error fetching key messages. Please try again later.', false);
             }
         }
 
         // Event listeners
         sendButton.addEventListener('click', sendMessage);
+        viewKeysButton.addEventListener('click', viewKeyMessages);
         
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {

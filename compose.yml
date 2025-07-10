@@ -1,4 +1,29 @@
 services:
+  # Database initialization service
+  db-init:
+    image: postgres:15-alpine
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - PGPASSWORD=chatbot_password
+    volumes:
+      - ./database/init.sql:/init.sql
+    networks:
+      - chatbot-network
+    command: |
+      sh -c "
+        echo 'Checking if database initialization is needed...'
+        if psql -h postgres -U chatbot_user -d chatbot_db -c 'SELECT 1 FROM key_messages LIMIT 1;' > /dev/null 2>&1; then
+          echo 'Database already initialized, skipping.'
+        else
+          echo 'Initializing database...'
+          psql -h postgres -U chatbot_user -d chatbot_db -f /init.sql
+          echo 'Database initialization complete!'
+        fi
+      "
+    restart: "no"
+
   backend:
     build: ./backend
     ports:
@@ -8,6 +33,10 @@ services:
       - OLLAMA_URL=http://host.docker.internal:11434/api/generate
       - MODEL_NAME=qwen:7b
       - FRONTEND_URL=http://localhost:3001
+      - DATABASE_URL=postgresql://chatbot_user:chatbot_password@postgres:5432/chatbot_db
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
     networks:
       - chatbot-network
     restart: unless-stopped
@@ -21,6 +50,29 @@ services:
     networks:
       - chatbot-network
     restart: unless-stopped
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_DB=chatbot_db
+      - POSTGRES_USER=chatbot_user
+      - POSTGRES_PASSWORD=chatbot_password
+      - POSTGRES_INITDB_ARGS=--lc-collate=C --lc-ctype=C
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chatbot_user -d chatbot_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
 
 networks:
   chatbot-network:
