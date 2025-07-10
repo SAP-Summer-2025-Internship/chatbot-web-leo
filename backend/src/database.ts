@@ -126,6 +126,22 @@ export class ChatbotDatabase {
       throw error;
     }
   }
+
+  // Clear all key messages for a user
+  static async clearUserKeyMessages(userId: string): Promise<number> {
+    const query = `
+      DELETE FROM key_messages
+      WHERE user_id = $1
+    `;
+    
+    try {
+      const result = await pool.query(query, [userId]);
+      return result.rowCount || 0;
+    } catch (error) {
+      console.error('Error clearing user key messages:', error);
+      throw error;
+    }
+  }
 }
 
 export default pool;

@@ -69,7 +69,7 @@
             font-size: 16px;
         }
         
-        #sendButton, #viewKeysButton {
+        #sendButton, #viewKeysButton, #clearDataButton {
             padding: 10px 20px;
             background-color: #007bff;
             color: white;
@@ -79,7 +79,7 @@
             font-size: 16px;
         }
         
-        #sendButton:hover, #viewKeysButton:hover {
+        #sendButton:hover, #viewKeysButton:hover, #clearDataButton:hover {
             background-color: #0056b3;
         }
 
@@ -89,6 +89,20 @@
 
         #viewKeysButton:hover {
             background-color: #218838;
+        }
+
+        #clearDataButton {
+            background-color: #dc3545;
+        }
+
+        #clearDataButton:hover {
+            background-color: #c82333;
+        }
+
+        .button-loading {
+            opacity: 0.6;
+            cursor: not-allowed !important;
+            pointer-events: none;
         }
         
         .typing-indicator {
@@ -131,6 +145,7 @@
             <input type="text" id="messageInput" placeholder="Type your message here..." autocomplete="off">
             <button id="sendButton">Send</button>
             <button id="viewKeysButton">View Keys</button>
+            <button id="clearDataButton" style="background-color: #dc3545; border-color: #dc3545;">Clear Data</button>
         </div>
     </div>
 
@@ -153,6 +168,7 @@
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
         const viewKeysButton = document.getElementById('viewKeysButton');
+        const clearDataButton = document.getElementById('clearDataButton');
         const statusElement = document.getElementById('status');
         const userIdDisplay = document.getElementById('userIdDisplay');
         
@@ -207,31 +223,99 @@
             }
         }
 
-        // View stored key messages
+        // View stored key messages with loading state and caching
+        let keyMessagesCache = null;
+        let lastKeyMessagesFetch = 0;
+        const CACHE_DURATION = 30000; // 30 seconds
+
         async function viewKeyMessages() {
+            // Prevent multiple simultaneous requests
+            if (viewKeysButton.classList.contains('button-loading')) {
+                return;
+            }
+
+            // Check cache first (only for viewing, not for after clearing)
+            const now = Date.now();
+            if (keyMessagesCache && (now - lastKeyMessagesFetch) < CACHE_DURATION) {
+                displayKeyMessages(keyMessagesCache);
+                return;
+            }
+
             try {
+                viewKeysButton.classList.add('button-loading');
+                viewKeysButton.textContent = 'Loading...';
+
                 const response = await fetch(`${BACKEND_URL}/api/key-messages/user/${userId}`);
                 const data = await response.json();
                 
-                if (data.keyMessages && data.keyMessages.length > 0) {
-                    let messageText = `📝 Your stored key messages:\n\n`;
-                    data.keyMessages.forEach((msg, index) => {
-                        const date = new Date(msg.created_at).toLocaleString();
-                        messageText += `${index + 1}. ${msg.message} (${date})\n`;
-                    });
-                    addMessage(messageText, false);
-                } else {
-                    addMessage('📝 No key messages found. Try sending a message containing the word "key"!', false);
-                }
+                // Update cache
+                keyMessagesCache = data.keyMessages;
+                lastKeyMessagesFetch = now;
+
+                displayKeyMessages(data.keyMessages);
             } catch (error) {
                 console.error('Error fetching key messages:', error);
                 addMessage('❌ Error fetching key messages. Please try again later.', false);
+            } finally {
+                viewKeysButton.classList.remove('button-loading');
+                viewKeysButton.textContent = 'View Keys';
+            }
+        }
+
+        function displayKeyMessages(keyMessages) {
+            if (keyMessages && keyMessages.length > 0) {
+                let messageText = `📝 Your stored key messages (${keyMessages.length}):\n\n`;
+                keyMessages.forEach((msg, index) => {
+                    const date = new Date(msg.created_at).toLocaleString();
+                    messageText += `${index + 1}. ${msg.message} (${date})\n`;
+                });
+                addMessage(messageText, false);
+            } else {
+                addMessage('📝 No key messages found. Try sending a message containing the word "key"!', false);
+            }
+        }
+
+        // Clear stored key messages with loading state
+        async function clearKeyMessages() {
+            // Prevent multiple simultaneous requests
+            if (clearDataButton.classList.contains('button-loading')) {
+                return;
+            }
+
+            if (!confirm('Are you sure you want to clear all your stored key messages? This cannot be undone.')) {
+                return;
+            }
+            
+            try {
+                clearDataButton.classList.add('button-loading');
+                clearDataButton.textContent = 'Clearing...';
+
+                const response = await fetch(`${BACKEND_URL}/api/key-messages/user/${userId}`, {
+                    method: 'DELETE'
+                });
+                const data = await response.json();
+                
+                if (response.ok) {
+                    addMessage(`🗑️ Successfully cleared ${data.deletedCount} key messages.`, false);
+                    // Clear cache since data has changed
+                    keyMessagesCache = [];
+                    lastKeyMessagesFetch = 0;
+                } else {
+                    addMessage(`❌ Error clearing messages: ${data.error}`, false);
+                }
+            } catch (error) {
+                console.error('Error clearing key messages:', error);
+                addMessage('❌ Error clearing key messages. Please try again later.', false);
+            } finally {
+                clearDataButton.classList.remove('button-loading');
+                clearDataButton.textContent = 'Clear Data';
             }
         }
 
         // Event listeners
         sendButton.addEventListener('click', sendMessage);
         viewKeysButton.addEventListener('click', viewKeyMessages);
+        clearDataButton.addEventListener('click', clearKeyMessages);
         
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {

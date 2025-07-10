@@ -374,6 +374,23 @@ app.get('/api/key-messages/stats', async (req: Request, res: Response) => {
     }
 });
 
+// DELETE endpoint for clearing user's key messages
+app.delete('/api/key-messages/user/:userId', async (req: Request, res: Response) => {
+    try {
+        // Check database connection first
+        const dbHealthy = await ChatbotDatabase.testConnection();
+        if (!dbHealthy) {
+            return res.status(503).json({ error: 'Database is currently unavailable' });
+        }
+        
+        const { userId } = req.params;
+        const deletedCount = await ChatbotDatabase.clearUserKeyMessages(userId);
+        res.json({ message: `Deleted ${deletedCount} key messages for user ${userId}`, deletedCount });
+    } catch (error: any) {
+        res.status(500).json({ error: 'Failed to clear user key messages: ' + error.message });
+    }
+});
+
 // Start server - Docker Compose ensures all dependencies are ready
 server.listen(PORT, () => {
     console.log(`🚀 Chatbot backend running on port ${PORT}`);
